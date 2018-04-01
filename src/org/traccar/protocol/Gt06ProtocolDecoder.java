@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 - 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2012 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,20 +44,10 @@ import java.util.regex.Pattern;
 
 public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
 
-    private boolean forceTimeZone = false;
-    private final TimeZone timeZone = TimeZone.getTimeZone("UTC");
-
-    private int serverIndex;
-
     private final Map<Integer, ChannelBuffer> photos = new HashMap<>();
 
     public Gt06ProtocolDecoder(Gt06Protocol protocol) {
         super(protocol);
-
-        if (Context.getConfig().hasKey(getProtocolName() + ".timezone")) {
-            forceTimeZone = true;
-            timeZone.setRawOffset(Context.getConfig().getInteger(getProtocolName() + ".timezone") * 1000);
-        }
     }
 
     public static final int MSG_LOGIN = 0x01;
@@ -118,6 +108,7 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
             case MSG_GPS_LBS_EXTEND:
             case MSG_GPS_2:
             case MSG_FENCE_SINGLE:
+            case MSG_FENCE_MULTI:
                 return true;
             default:
                 return false;
@@ -135,6 +126,7 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
             case MSG_GPS_LBS_STATUS_3:
             case MSG_GPS_2:
             case MSG_FENCE_SINGLE:
+            case MSG_FENCE_MULTI:
             case MSG_LBS_ALARM:
             case MSG_LBS_ADDRESS:
                 return true;
@@ -156,7 +148,21 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
         }
     }
 
-    private void sendResponse(Channel channel, boolean extended, int type, ChannelBuffer content) {
+    private static boolean hasLanguage(int type) {
+        switch (type) {
+            case MSG_GPS_PHONE:
+            case MSG_HEARTBEAT:
+            case MSG_GPS_LBS_STATUS_3:
+            case MSG_LBS_MULTIPLE:
+            case MSG_LBS_2:
+            case MSG_FENCE_MULTI:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void sendResponse(Channel channel, boolean extended, int type, int index, ChannelBuffer content) {
         if (channel != null) {
             ChannelBuffer response = ChannelBuffers.dynamicBuffer();
             int length = 5 + (content != null ? content.readableBytes() : 0);
@@ -171,7 +177,7 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
             if (content != null) {
                 response.writeBytes(content);
             }
-            response.writeShort(++serverIndex);
+            response.writeShort(index);
             response.writeShort(Checksum.crc16(Checksum.CRC16_X25,
                     response.toByteBuffer(2, response.writerIndex() - 2)));
             response.writeByte('\r'); response.writeByte('\n'); // ending
@@ -185,12 +191,12 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
         content.writeInt(pictureId);
         content.writeInt(photo.writerIndex());
         content.writeShort(Math.min(photo.writableBytes(), 1024));
-        sendResponse(channel, false, MSG_X1_PHOTO_DATA, content);
+        sendResponse(channel, false, MSG_X1_PHOTO_DATA, 0, content);
     }
 
-    private boolean decodeGps(Position position, ChannelBuffer buf, boolean hasLength) {
+    private boolean decodeGps(Position position, ChannelBuffer buf, boolean hasLength, TimeZone timezone) {
 
-        DateBuilder dateBuilder = new DateBuilder(timeZone)
+        DateBuilder dateBuilder = new DateBuilder(timezone)
                 .setDate(buf.readUnsignedByte(), buf.readUnsignedByte(), buf.readUnsignedByte())
                 .setTime(buf.readUnsignedByte(), buf.readUnsignedByte(), buf.readUnsignedByte());
         position.setTime(dateBuilder.getDate());
@@ -373,12 +379,20 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
             if (deviceSession == null) {
                 return null;
             }
+            if (deviceSession.getTimeZone() == null) {
+                deviceSession.setTimeZone(getTimeZone(deviceSession.getDeviceId()));
+            }
         }
 
         if (type == MSG_LOGIN) {
 
             String imei = ChannelBuffers.hexDump(buf.readBytes(8)).substring(1);
             buf.readUnsignedShort(); // type
+
+            deviceSession = getDeviceSession(channel, remoteAddress, imei);
+            if (deviceSession != null && deviceSession.getTimeZone() == null) {
+                deviceSession.setTimeZone(getTimeZone(deviceSession.getDeviceId()));
+            }
 
             if (dataLength > 10) {
                 int extensionBits = buf.readUnsignedShort();
@@ -388,20 +402,24 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
                 if ((extensionBits & 0x8) != 0) {
                     offset = -offset;
                 }
-                if (!forceTimeZone) {
-                    timeZone.setRawOffset(offset * 1000);
+                if (deviceSession != null) {
+                    TimeZone timeZone = deviceSession.getTimeZone();
+                    if (timeZone.getRawOffset() == 0) {
+                        timeZone.setRawOffset(offset * 1000);
+                        deviceSession.setTimeZone(timeZone);
+                    }
                 }
+
             }
 
-            if (getDeviceSession(channel, remoteAddress, imei) != null) {
-                sendResponse(channel, false, type, null);
+            if (deviceSession != null) {
+                sendResponse(channel, false, type, buf.getShort(buf.writerIndex() - 6), null);
             }
 
         } else if (type == MSG_HEARTBEAT) {
 
-            Position position = new Position();
+            Position position = new Position(getProtocolName());
             position.setDeviceId(deviceSession.getDeviceId());
-            position.setProtocol(getProtocolName());
 
             getLastLocation(position, null);
 
@@ -410,7 +428,7 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
             position.set(Position.KEY_IGNITION, BitUtil.check(status, 1));
             position.set(Position.KEY_CHARGE, BitUtil.check(status, 2));
 
-            sendResponse(channel, false, type, null);
+            sendResponse(channel, false, type, buf.getShort(buf.writerIndex() - 6), null);
 
             return position;
 
@@ -421,7 +439,7 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
             content.writeByte(response.length());
             content.writeInt(0);
             content.writeBytes(response.getBytes(StandardCharsets.US_ASCII));
-            sendResponse(channel, true, MSG_ADDRESS_RESPONSE, content);
+            sendResponse(channel, true, MSG_ADDRESS_RESPONSE, 0, content);
 
         } else if (type == MSG_TIME_REQUEST) {
 
@@ -433,17 +451,16 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
             content.writeByte(calendar.get(Calendar.HOUR_OF_DAY));
             content.writeByte(calendar.get(Calendar.MINUTE));
             content.writeByte(calendar.get(Calendar.SECOND));
-            sendResponse(channel, false, MSG_TIME_REQUEST, content);
+            sendResponse(channel, false, MSG_TIME_REQUEST, 0, content);
 
         } else if (type == MSG_X1_GPS) {
 
-            Position position = new Position();
+            Position position = new Position(getProtocolName());
             position.setDeviceId(deviceSession.getDeviceId());
-            position.setProtocol(getProtocolName());
 
             buf.readUnsignedInt(); // data and alarm
 
-            decodeGps(position, buf, false);
+            decodeGps(position, buf, false, deviceSession.getTimeZone());
 
             buf.readUnsignedShort(); // terminal info
 
@@ -485,9 +502,8 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
 
     private Object decodeWifi(ChannelBuffer buf, DeviceSession deviceSession) throws Exception {
 
-        Position position = new Position();
+        Position position = new Position(getProtocolName());
         position.setDeviceId(deviceSession.getDeviceId());
-        position.setProtocol(getProtocolName());
 
         DateBuilder dateBuilder = new DateBuilder()
                 .setYear(BcdUtil.readInteger(buf, 2))
@@ -524,30 +540,29 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
     private Object decodeBasicOther(Channel channel, ChannelBuffer buf,
             DeviceSession deviceSession, int type, int dataLength) throws Exception {
 
-        Position position = new Position();
+        Position position = new Position(getProtocolName());
         position.setDeviceId(deviceSession.getDeviceId());
-        position.setProtocol(getProtocolName());
 
         if (type == MSG_LBS_MULTIPLE || type == MSG_LBS_EXTEND || type == MSG_LBS_WIFI
                 || type == MSG_LBS_2 || type == MSG_WIFI_3) {
 
             boolean longFormat = type == MSG_LBS_2 || type == MSG_WIFI_3;
 
-            DateBuilder dateBuilder = new DateBuilder(timeZone)
+            DateBuilder dateBuilder = new DateBuilder(deviceSession.getTimeZone())
                     .setDate(buf.readUnsignedByte(), buf.readUnsignedByte(), buf.readUnsignedByte())
                     .setTime(buf.readUnsignedByte(), buf.readUnsignedByte(), buf.readUnsignedByte());
 
             getLastLocation(position, dateBuilder.getDate());
 
             int mcc = buf.readUnsignedShort();
-            int mnc = buf.readUnsignedByte();
+            int mnc = BitUtil.check(mcc, 15) ? buf.readUnsignedShort() : buf.readUnsignedByte();
             Network network = new Network();
             for (int i = 0; i < 7; i++) {
                 int lac = longFormat ? buf.readInt() : buf.readUnsignedShort();
                 int cid = longFormat ? (int) buf.readLong() : buf.readUnsignedMedium();
                 int rssi = -buf.readUnsignedByte();
                 if (lac > 0) {
-                    network.addCellTower(CellTower.from(mcc, mnc, lac, cid, rssi));
+                    network.addCellTower(CellTower.from(BitUtil.to(mcc, 15), mnc, lac, cid, rssi));
                 }
             }
 
@@ -579,7 +594,7 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
         } else if (isSupported(type)) {
 
             if (hasGps(type)) {
-                decodeGps(position, buf, false);
+                decodeGps(position, buf, false, deviceSession.getTimeZone());
             } else {
                 getLastLocation(position, null);
             }
@@ -606,13 +621,21 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
 
             buf.skipBytes(dataLength);
             if (type != MSG_COMMAND_0 && type != MSG_COMMAND_1 && type != MSG_COMMAND_2) {
-                sendResponse(channel, false, type, null);
+                sendResponse(channel, false, type, buf.getShort(buf.writerIndex() - 6), null);
             }
             return null;
 
         }
 
-        sendResponse(channel, false, type, null);
+        if (hasLanguage(type)) {
+            buf.readUnsignedShort();
+        }
+
+        if (type == MSG_GPS_LBS_STATUS_3 || type == MSG_FENCE_MULTI) {
+            position.set(Position.KEY_GEOFENCE, buf.readUnsignedByte());
+        }
+
+        sendResponse(channel, false, type, buf.getShort(buf.writerIndex() - 6), null);
 
         return position;
     }
@@ -624,9 +647,12 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
             return null;
         }
 
-        Position position = new Position();
+        if (deviceSession.getTimeZone() == null) {
+            deviceSession.setTimeZone(getTimeZone(deviceSession.getDeviceId()));
+        }
+
+        Position position = new Position(getProtocolName());
         position.setDeviceId(deviceSession.getDeviceId());
-        position.setProtocol(getProtocolName());
 
         buf.readUnsignedShort(); // length
         int type = buf.readUnsignedByte();
@@ -687,13 +713,14 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
                 sendPhotoRequest(channel, pictureId);
             } else {
                 Device device = Context.getDeviceManager().getById(deviceSession.getDeviceId());
-                Context.getMediaManager().writeFile(device.getUniqueId(), photo, "jpg");
+                position.set(
+                        Position.KEY_IMAGE, Context.getMediaManager().writeFile(device.getUniqueId(), photo, "jpg"));
                 photos.remove(pictureId);
             }
 
         } else if (type == MSG_AZ735_GPS || type == MSG_AZ735_ALARM) {
 
-            if (!decodeGps(position, buf, true)) {
+            if (!decodeGps(position, buf, true, deviceSession.getTimeZone())) {
                 getLastLocation(position, position.getDeviceTime());
             }
 
@@ -732,7 +759,7 @@ public class Gt06ProtocolDecoder extends BaseProtocolDecoder {
 
             buf.skipBytes(buf.readUnsignedByte()); // reserved extension
 
-            sendResponse(channel, true, type, null);
+            sendResponse(channel, true, type, buf.getShort(buf.writerIndex() - 6), null);
 
             return position;
 
