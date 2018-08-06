@@ -15,11 +15,9 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.bootstrap.ConnectionlessBootstrap;
-import org.jboss.netty.bootstrap.ServerBootstrap;
-import org.jboss.netty.channel.ChannelPipeline;
-import org.jboss.netty.handler.codec.frame.LengthFieldBasedFrameDecoder;
+import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import org.traccar.BaseProtocol;
+import org.traccar.PipelineBuilder;
 import org.traccar.TrackerServer;
 import org.traccar.model.Command;
 
@@ -37,26 +35,22 @@ public class CastelProtocol extends BaseProtocol {
 
     @Override
     public void initTrackerServers(List<TrackerServer> serverList) {
-        TrackerServer server = new TrackerServer(new ServerBootstrap(), getName()) {
+        serverList.add(new TrackerServer(false, getName()) {
             @Override
-            protected void addSpecificHandlers(ChannelPipeline pipeline) {
-                pipeline.addLast("frameDecoder", new LengthFieldBasedFrameDecoder(1024, 2, 2, -4, 0));
+            protected void addProtocolHandlers(PipelineBuilder pipeline) {
+                pipeline.addLast("frameDecoder",
+                        new LengthFieldBasedFrameDecoder(ByteOrder.LITTLE_ENDIAN, 1024, 2, 2, -4, 0, true));
                 pipeline.addLast("objectEncoder", new CastelProtocolEncoder());
                 pipeline.addLast("objectDecoder", new CastelProtocolDecoder(CastelProtocol.this));
             }
-        };
-        server.setEndianness(ByteOrder.LITTLE_ENDIAN);
-        serverList.add(server);
-
-        server = new TrackerServer(new ConnectionlessBootstrap(), getName()) {
+        });
+        serverList.add(new TrackerServer(true, getName()) {
             @Override
-            protected void addSpecificHandlers(ChannelPipeline pipeline) {
+            protected void addProtocolHandlers(PipelineBuilder pipeline) {
                 pipeline.addLast("objectEncoder", new CastelProtocolEncoder());
                 pipeline.addLast("objectDecoder", new CastelProtocolDecoder(CastelProtocol.this));
             }
-        };
-        server.setEndianness(ByteOrder.LITTLE_ENDIAN);
-        serverList.add(server);
+        });
     }
 
 }

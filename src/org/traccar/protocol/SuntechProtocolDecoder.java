@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 - 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2013 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.Context;
 import org.traccar.DeviceSession;
@@ -239,7 +239,7 @@ public class SuntechProtocolDecoder extends BaseProtocolDecoder {
         if (hbm) {
 
             if (index < values.length) {
-                position.set(Position.KEY_HOURS, Integer.parseInt(values[index++]));
+                position.set(Position.KEY_HOURS, UnitsConverter.msFromMinutes(Integer.parseInt(values[index++])));
             }
 
             if (index < values.length) {

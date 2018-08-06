@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 - 2015 Anton Tananaev (anton@traccar.org)
+ * Copyright 2012 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,10 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.Parser;
 import org.traccar.helper.PatternBuilder;
 import org.traccar.helper.UnitsConverter;
@@ -60,7 +61,8 @@ public class Tr20ProtocolDecoder extends BaseProtocolDecoder {
         Parser parser = new Parser(PATTERN_PING, (String) msg);
         if (parser.matches()) {
             if (channel != null) {
-                channel.write("&&" + parser.next() + "\r\n"); // keep-alive response
+                channel.writeAndFlush(new NetworkMessage(
+                        "&&" + parser.next() + "\r\n", remoteAddress)); // keep-alive response
             }
             return null;
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,26 +15,28 @@
  */
 package org.traccar;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import org.traccar.model.Position;
 
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 
-public class RemoteAddressHandler extends ExtendedObjectDecoder {
+@ChannelHandler.Sharable
+public class RemoteAddressHandler extends ChannelInboundHandlerAdapter {
 
     @Override
-    protected Object decode(
-            Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
+    public void channelRead(ChannelHandlerContext ctx, Object msg) {
 
-        String hostAddress = ((InetSocketAddress) remoteAddress).getAddress().getHostAddress();
+        InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
+        String hostAddress = remoteAddress != null ? remoteAddress.getAddress().getHostAddress() : null;
 
         if (msg instanceof Position) {
             Position position = (Position) msg;
             position.set(Position.KEY_IP, hostAddress);
         }
 
-        return msg;
+        ctx.fireChannelRead(msg);
     }
 
 }

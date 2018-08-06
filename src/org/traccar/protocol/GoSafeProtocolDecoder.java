@@ -15,9 +15,10 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.BitUtil;
 import org.traccar.helper.DateBuilder;
 import org.traccar.helper.Parser;
@@ -85,7 +86,9 @@ public class GoSafeProtocolDecoder extends BaseProtocolDecoder {
                     position.setSpeed(UnitsConverter.knotsFromKph(Integer.parseInt(values[index - 1])));
                 }
                 position.setCourse(Integer.parseInt(values[index++]));
-                position.setAltitude(Integer.parseInt(values[index++]));
+                if (index < values.length) {
+                    position.setAltitude(Integer.parseInt(values[index++]));
+                }
                 if (index < values.length) {
                     position.set(Position.KEY_HDOP, Double.parseDouble(values[index++]));
                 }
@@ -107,8 +110,9 @@ public class GoSafeProtocolDecoder extends BaseProtocolDecoder {
                 }
                 if (index < values.length) {
                     String[] hours = values[index].split("-");
-                    position.set(Position.KEY_HOURS, Integer.parseInt(hours[0])
-                            + Integer.parseInt(hours[0]) / 60.0 + Integer.parseInt(hours[0]) / 3600.0);
+                    position.set(Position.KEY_HOURS, (Integer.parseInt(hours[0]) * 3600
+                            + (hours.length > 1 ? Integer.parseInt(hours[1]) * 60 : 0)
+                            + (hours.length > 2 ? Integer.parseInt(hours[2]) : 0)) * 1000);
                 }
                 break;
             case "ADC":
@@ -204,7 +208,7 @@ public class GoSafeProtocolDecoder extends BaseProtocolDecoder {
             Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
 
         if (channel != null) {
-            channel.write("1234");
+            channel.writeAndFlush(new NetworkMessage("1234", remoteAddress));
         }
 
         String sentence = (String) msg;

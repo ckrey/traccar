@@ -1,6 +1,6 @@
 /*
  * Copyright 2017 Jan-Piet Mens (jpmens@gmail.com)
- * Copyright 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2017 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,9 @@
 
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.handler.codec.http.HttpRequest;
-import org.jboss.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.channel.Channel;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import org.traccar.BaseHttpProtocolDecoder;
 import org.traccar.DeviceSession;
 import org.traccar.Context;
@@ -45,9 +45,9 @@ public class OwnTracksProtocolDecoder extends BaseHttpProtocolDecoder {
     protected Object decode(
             Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
 
-        HttpRequest request = (HttpRequest) msg;
+        FullHttpRequest request = (FullHttpRequest) msg;
         JsonObject root = Json.createReader(
-                new StringReader(request.getContent().toString(StandardCharsets.US_ASCII))).readObject();
+                new StringReader(request.content().toString(StandardCharsets.US_ASCII))).readObject();
 
         if (!root.containsKey("_type")) {
             sendResponse(channel, HttpResponseStatus.OK);

@@ -15,10 +15,12 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.BitUtil;
+import org.traccar.helper.Checksum;
 import org.traccar.helper.DateBuilder;
 import org.traccar.helper.Parser;
 import org.traccar.helper.PatternBuilder;
@@ -244,10 +246,15 @@ public class TotemProtocolDecoder extends BaseProtocolDecoder {
         }
 
         int io = parser.nextBinInt();
+        position.set(Position.KEY_STATUS, io);
         if (pattern == PATTERN1) {
-            for (int i = 1; i <= 4; i++) {
-                position.set(Position.PREFIX_IN + i, BitUtil.check(io, 3 + i));
-            }
+            position.set(Position.KEY_ALARM, BitUtil.check(io, 0) ? Position.ALARM_SOS : null);
+            position.set(Position.PREFIX_IN + 3, BitUtil.check(io, 4));
+            position.set(Position.PREFIX_IN + 4, BitUtil.check(io, 5));
+            position.set(Position.PREFIX_IN + 1, BitUtil.check(io, 6));
+            position.set(Position.PREFIX_IN + 2, BitUtil.check(io, 7));
+            position.set(Position.PREFIX_OUT + 1, BitUtil.check(io, 8));
+            position.set(Position.PREFIX_OUT + 2, BitUtil.check(io, 9));
             position.set(Position.KEY_BATTERY, parser.nextDouble(0) * 0.01);
         } else {
             position.set(Position.KEY_ANTENNA, BitUtil.check(io, 0));
@@ -255,11 +262,12 @@ public class TotemProtocolDecoder extends BaseProtocolDecoder {
             for (int i = 1; i <= 6; i++) {
                 position.set(Position.PREFIX_IN + i, BitUtil.check(io, 1 + i));
             }
+            for (int i = 1; i <= 4; i++) {
+                position.set(Position.PREFIX_OUT + i, BitUtil.check(io, 7 + i));
+            }
             position.set(Position.KEY_BATTERY, parser.nextDouble(0) * 0.1);
         }
-        for (int i = 1; i <= 4; i++) {
-            position.set(Position.PREFIX_OUT + i, BitUtil.check(io, 7 + i));
-        }
+
         position.set(Position.KEY_POWER, parser.nextDouble(0));
         position.set(Position.PREFIX_ADC + 1, parser.next());
 
@@ -364,7 +372,7 @@ public class TotemProtocolDecoder extends BaseProtocolDecoder {
 
         String sentence = (String) msg;
         Pattern pattern = PATTERN3;
-        if (sentence.indexOf("A") == 6) {
+        if (sentence.charAt(2) == '0') {
             pattern = PATTERN4;
         } else if (sentence.contains("$GPRMC")) {
             pattern = PATTERN1;
@@ -403,9 +411,11 @@ public class TotemProtocolDecoder extends BaseProtocolDecoder {
 
         if (channel != null) {
             if (pattern == PATTERN4) {
-                channel.write("$$0014AA" + sentence.substring(sentence.length() - 6));
+                String response = "$$0014AA" + sentence.substring(sentence.length() - 6, sentence.length() - 2);
+                response += String.format("%02X", Checksum.xor(response)).toUpperCase();
+                channel.writeAndFlush(new NetworkMessage(response, remoteAddress));
             } else {
-                channel.write("ACK OK\r\n");
+                channel.writeAndFlush(new NetworkMessage("ACK OK\r\n", remoteAddress));
             }
         }
 

@@ -15,12 +15,10 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.bootstrap.ServerBootstrap;
-import org.jboss.netty.channel.ChannelPipeline;
 import org.traccar.BaseProtocol;
+import org.traccar.PipelineBuilder;
 import org.traccar.TrackerServer;
 
-import java.nio.ByteOrder;
 import java.util.List;
 
 public class RoboTrackProtocol extends BaseProtocol {
@@ -31,15 +29,13 @@ public class RoboTrackProtocol extends BaseProtocol {
 
     @Override
     public void initTrackerServers(List<TrackerServer> serverList) {
-        TrackerServer server = new TrackerServer(new ServerBootstrap(), getName()) {
+        serverList.add(new TrackerServer(false, getName()) {
             @Override
-            protected void addSpecificHandlers(ChannelPipeline pipeline) {
+            protected void addProtocolHandlers(PipelineBuilder pipeline) {
                 pipeline.addLast("frameDecoder", new RoboTrackFrameDecoder());
                 pipeline.addLast("objectDecoder", new RoboTrackProtocolDecoder(RoboTrackProtocol.this));
             }
-        };
-        server.setEndianness(ByteOrder.LITTLE_ENDIAN);
-        serverList.add(server);
+        });
     }
 
 }

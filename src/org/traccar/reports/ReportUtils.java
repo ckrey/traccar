@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 - 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2018 Anton Tananaev (anton@traccar.org)
  * Copyright 2016 - 2017 Andrey Kunitsyn (andrey@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -151,8 +151,10 @@ public final class ReportUtils {
         return jxlsContext;
     }
 
-    public static void processTemplateWithSheets(InputStream templateStream, OutputStream targetStream,
+    public static void processTemplateWithSheets(
+            InputStream templateStream, OutputStream targetStream,
             org.jxls.common.Context jxlsContext) throws IOException {
+
         Transformer transformer = TransformerFactory.createTransformer(templateStream, targetStream);
         List<Area> xlsAreas = new XlsCommentAreaBuilder(transformer).build();
         for (Area xlsArea : xlsAreas) {
@@ -166,6 +168,7 @@ public final class ReportUtils {
 
     private static TripReport calculateTrip(
             ArrayList<Position> positions, int startIndex, int endIndex, boolean ignoreOdometer) {
+
         Position startTrip = positions.get(startIndex);
         Position endTrip = positions.get(endIndex);
 
@@ -217,10 +220,22 @@ public final class ReportUtils {
         trip.setDriverUniqueId(findDriver(startTrip, endTrip));
         trip.setDriverName(findDriverName(trip.getDriverUniqueId()));
 
+        if (!ignoreOdometer
+                && startTrip.getDouble(Position.KEY_ODOMETER) != 0
+                && endTrip.getDouble(Position.KEY_ODOMETER) != 0) {
+            trip.setStartOdometer(startTrip.getDouble(Position.KEY_ODOMETER));
+            trip.setEndOdometer(endTrip.getDouble(Position.KEY_ODOMETER));
+        } else {
+            trip.setStartOdometer(startTrip.getDouble(Position.KEY_TOTAL_DISTANCE));
+            trip.setEndOdometer(endTrip.getDouble(Position.KEY_TOTAL_DISTANCE));
+        }
+
         return trip;
     }
 
-    private static StopReport calculateStop(ArrayList<Position> positions, int startIndex, int endIndex) {
+    private static StopReport calculateStop(
+            ArrayList<Position> positions, int startIndex, int endIndex, boolean ignoreOdometer) {
+
         Position startStop = positions.get(startIndex);
         Position endStop = positions.get(endIndex);
 
@@ -248,24 +263,42 @@ public final class ReportUtils {
         stop.setSpentFuel(calculateFuel(startStop, endStop));
 
         long engineHours = 0;
-        for (int i = startIndex + 1; i <= endIndex; i++) {
-            if (positions.get(i).getBoolean(Position.KEY_IGNITION)
-                    && positions.get(i - 1).getBoolean(Position.KEY_IGNITION)) {
-                engineHours += positions.get(i).getFixTime().getTime() - positions.get(i - 1).getFixTime().getTime();
+        if (startStop.getAttributes().containsKey(Position.KEY_HOURS)
+                && endStop.getAttributes().containsKey(Position.KEY_HOURS)) {
+            engineHours = endStop.getLong(Position.KEY_HOURS) - startStop.getLong(Position.KEY_HOURS);
+        } else if (Context.getConfig().getBoolean("processing.engineHours.enable")) {
+            // Temporary fallback for old data, to be removed in May 2019
+            for (int i = startIndex + 1; i <= endIndex; i++) {
+                if (positions.get(i).getBoolean(Position.KEY_IGNITION)
+                        && positions.get(i - 1).getBoolean(Position.KEY_IGNITION)) {
+                    engineHours += positions.get(i).getFixTime().getTime()
+                            - positions.get(i - 1).getFixTime().getTime();
+                }
             }
         }
         stop.setEngineHours(engineHours);
+
+        if (!ignoreOdometer
+                && startStop.getDouble(Position.KEY_ODOMETER) != 0
+                && endStop.getDouble(Position.KEY_ODOMETER) != 0) {
+            stop.setStartOdometer(startStop.getDouble(Position.KEY_ODOMETER));
+            stop.setEndOdometer(endStop.getDouble(Position.KEY_ODOMETER));
+        } else {
+            stop.setStartOdometer(startStop.getDouble(Position.KEY_TOTAL_DISTANCE));
+            stop.setEndOdometer(endStop.getDouble(Position.KEY_TOTAL_DISTANCE));
+        }
 
         return stop;
 
     }
 
-    private static <T extends BaseReport> T calculateTripOrStop(ArrayList<Position> positions, int startIndex,
-            int endIndex, boolean ignoreOdometer, Class<T> reportClass) {
+    private static <T extends BaseReport> T calculateTripOrStop(
+            ArrayList<Position> positions, int startIndex, int endIndex, boolean ignoreOdometer, Class<T> reportClass) {
+
         if (reportClass.equals(TripReport.class)) {
             return (T) calculateTrip(positions, startIndex, endIndex, ignoreOdometer);
         } else {
-            return (T) calculateStop(positions, startIndex, endIndex);
+            return (T) calculateStop(positions, startIndex, endIndex, ignoreOdometer);
         }
     }
 
@@ -289,12 +322,14 @@ public final class ReportUtils {
         }
     }
 
-    public static <T extends BaseReport> Collection<T> detectTripsAndStops(Collection<Position> positionCollection,
+    public static <T extends BaseReport> Collection<T> detectTripsAndStops(
+            Collection<Position> positionCollection,
             TripsConfig tripsConfig, boolean ignoreOdometer, Class<T> reportClass) {
+
         Collection<T> result = new ArrayList<>();
 
         ArrayList<Position> positions = new ArrayList<>(positionCollection);
-        if (positions != null && !positions.isEmpty()) {
+        if (!positions.isEmpty()) {
             boolean trips = reportClass.equals(TripReport.class);
             MotionEventHandler  motionHandler = new MotionEventHandler(tripsConfig);
             DeviceState deviceState = new DeviceState();
@@ -333,6 +368,8 @@ public final class ReportUtils {
                             ignoreOdometer, reportClass));
             }
         }
+
         return result;
     }
+
 }

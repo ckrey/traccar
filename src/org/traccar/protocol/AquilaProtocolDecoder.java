@@ -15,9 +15,11 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
+import org.traccar.Context;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.Parser;
 import org.traccar.helper.PatternBuilder;
 import org.traccar.helper.UnitsConverter;
@@ -215,11 +217,12 @@ public class AquilaProtocolDecoder extends BaseProtocolDecoder {
         return position;
     }
 
-    private static final Pattern PATTERN_B = new PatternBuilder()
-            .text("$Header,")
+    private static final Pattern PATTERN_B_1 = new PatternBuilder()
+            .text("$")
+            .expression("[^,]+,")                // header
             .expression("[^,]+,")                // client
             .expression("[^,]+,")                // firmware version
-            .expression(".{2},")                 // type
+            .expression(".{2},")                 // packet type
             .number("d+,")                       // message id
             .expression("[LH],")                 // status
             .number("(d+),")                     // imei
@@ -242,7 +245,7 @@ public class AquilaProtocolDecoder extends BaseProtocolDecoder {
             .number("([01]),")                   // charge
             .number("(d+.d+),")                  // power
             .number("(d+.d+),")                  // battery
-            .number("[01],")                     // emergency
+            .number("([01]),")                   // emergency
             .expression("[CO],")                 // tamper
             .number("(d+),")                     // rssi
             .number("(d+),")                     // mcc
@@ -262,14 +265,68 @@ public class AquilaProtocolDecoder extends BaseProtocolDecoder {
             .any()
             .compile();
 
-    private Position decodeB(Channel channel, SocketAddress remoteAddress, String sentence) {
+    private static final Pattern PATTERN_B_2 = new PatternBuilder()
+            .text("$")
+            .expression("[^,]+,")                // header
+            .expression("[^,]+,")                // client
+            .expression("(.{3}),")               // message type
+            .number("(d+),")                     // imei
+            .expression(".{2},")                 // packet type
+            .number("(dd)(dd)(dddd)")            // date (ddmmyyyy)
+            .number("(dd)(dd)(dd),")             // time (hhmmss)
+            .expression("([AV]),")               // validity
+            .number("(-?d+.d+),")                // latitude
+            .expression("([NS]),")
+            .number("(-?d+.d+),")                // longitude
+            .expression("([EW]),")
+            .number("(-?d+.d+),")                // altitude
+            .number("(d+.d+),")                  // speed
+            .any()
+            .compile();
 
-        Parser parser = new Parser(PATTERN_B, sentence);
+    private Position decodeB2(Channel channel, SocketAddress remoteAddress, String sentence) {
+
+        Parser parser = new Parser(PATTERN_B_2, sentence);
         if (!parser.matches()) {
             return null;
         }
 
-        DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, parser.next());
+        String type = parser.next();
+        String id = parser.next();
+        DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, id);
+        if (deviceSession == null) {
+            return null;
+        }
+
+        Position position = new Position(getProtocolName());
+        position.setDeviceId(deviceSession.getDeviceId());
+
+        position.setTime(parser.nextDateTime(Parser.DateTimeFormat.DMY_HMS));
+        position.setValid(parser.next().equals("A"));
+        position.setLatitude(parser.nextCoordinate(Parser.CoordinateFormat.DEG_HEM));
+        position.setLongitude(parser.nextCoordinate(Parser.CoordinateFormat.DEG_HEM));
+        position.setAltitude(parser.nextDouble());
+        position.setSpeed(UnitsConverter.knotsFromKph(parser.nextDouble()));
+
+        if (type.equals("EMR") && channel != null) {
+            String password = Context.getIdentityManager().lookupAttributeString(
+                    deviceSession.getDeviceId(), getProtocolName() + ".password", "aquila123", true);
+            channel.writeAndFlush(new NetworkMessage(
+                    "#set$" + id + "@" + password + "#EMR_MODE:0*", remoteAddress));
+        }
+
+        return position;
+    }
+
+    private Position decodeB1(Channel channel, SocketAddress remoteAddress, String sentence) {
+
+        Parser parser = new Parser(PATTERN_B_1, sentence);
+        if (!parser.matches()) {
+            return null;
+        }
+
+        String id = parser.next();
+        DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, id);
         if (deviceSession == null) {
             return null;
         }
@@ -295,6 +352,10 @@ public class AquilaProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.KEY_POWER, parser.nextDouble());
         position.set(Position.KEY_BATTERY, parser.nextDouble());
 
+        if (parser.nextInt() == 1) {
+            position.set(Position.KEY_ALARM, Position.ALARM_SOS);
+        }
+
         Network network = new Network();
 
         int rssi = parser.nextInt();
@@ -315,6 +376,14 @@ public class AquilaProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.PREFIX_ADC + 2, parser.nextDouble());
 
         return position;
+    }
+
+    private Position decodeB(Channel channel, SocketAddress remoteAddress, String sentence) {
+        if (sentence.contains("EMR") || sentence.contains("SEM")) {
+            return decodeB2(channel, remoteAddress, sentence);
+        } else {
+            return decodeB1(channel, remoteAddress, sentence);
+        }
     }
 
     @Override
