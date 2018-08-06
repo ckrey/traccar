@@ -15,11 +15,12 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.Channel;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.Context;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.BitUtil;
 import org.traccar.helper.Parser;
 import org.traccar.helper.PatternBuilder;
@@ -63,11 +64,11 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
     private void sendResponse(Channel channel, String id, String index, String content) {
         if (channel != null) {
             if (index != null) {
-                channel.write(String.format(
-                        "[%s*%s*%s*%04x*%s]", manufacturer, id, index, content.length(), content));
+                channel.writeAndFlush(new NetworkMessage(String.format("[%s*%s*%s*%04x*%s]",
+                        manufacturer, id, index, content.length(), content), channel.remoteAddress()));
             } else {
-                channel.write(String.format(
-                        "[%s*%s*%04x*%s]", manufacturer, id, content.length(), content));
+                channel.writeAndFlush(new NetworkMessage(String.format("[%s*%s*%04x*%s]",
+                        manufacturer, id, content.length(), content), channel.remoteAddress()));
             }
         }
     }
@@ -176,14 +177,14 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
     protected Object decode(
             Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
 
-        ChannelBuffer buf = (ChannelBuffer) msg;
+        ByteBuf buf = (ByteBuf) msg;
 
         buf.skipBytes(1); // header
-        manufacturer = buf.readBytes(2).toString(StandardCharsets.US_ASCII);
+        manufacturer = buf.readSlice(2).toString(StandardCharsets.US_ASCII);
         buf.skipBytes(1); // delimiter
 
         int idIndex = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) '*');
-        String id = buf.readBytes(idIndex - buf.readerIndex()).toString(StandardCharsets.US_ASCII);
+        String id = buf.readSlice(idIndex - buf.readerIndex()).toString(StandardCharsets.US_ASCII);
         DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, id);
         if (deviceSession == null) {
             return null;
@@ -197,7 +198,7 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
                 && buf.toString(contentIndex + 1, 4, StandardCharsets.US_ASCII).matches("\\p{XDigit}+")) {
             int indexLength = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) '*') - buf.readerIndex();
             hasIndex = true;
-            index = buf.readBytes(indexLength).toString(StandardCharsets.US_ASCII);
+            index = buf.readSlice(indexLength).toString(StandardCharsets.US_ASCII);
             buf.skipBytes(1); // delimiter
         }
 
@@ -211,7 +212,7 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
             contentIndex = buf.writerIndex();
         }
 
-        String type = buf.readBytes(contentIndex - buf.readerIndex()).toString(StandardCharsets.US_ASCII);
+        String type = buf.readSlice(contentIndex - buf.readerIndex()).toString(StandardCharsets.US_ASCII);
 
         if (contentIndex < buf.writerIndex()) {
             buf.readerIndex(contentIndex + 1);
@@ -225,7 +226,7 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
 
             sendResponse(channel, id, index, "LK");
 
-            if (buf.readable()) {
+            if (buf.isReadable()) {
                 String[] values = buf.toString(StandardCharsets.US_ASCII).split(",");
                 if (values.length >= 3) {
                     Position position = new Position(getProtocolName());
@@ -242,11 +243,16 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
         } else if (type.equals("UD") || type.equals("UD2") || type.equals("UD3")
                 || type.equals("AL") || type.equals("WT")) {
 
+            Position position = decodePosition(deviceSession, buf.toString(StandardCharsets.US_ASCII));
+
             if (type.equals("AL")) {
+                if (position != null) {
+                    position.set(Position.KEY_ALARM, Position.ALARM_SOS);
+                }
                 sendResponse(channel, id, index, "AL");
             }
 
-            return decodePosition(deviceSession, buf.toString(StandardCharsets.US_ASCII));
+            return position;
 
         } else if (type.equals("TKQ")) {
 
@@ -254,7 +260,7 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
 
         } else if (type.equals("PULSE") || type.equals("heart") || type.equals("bphrt")) {
 
-            if (buf.readable()) {
+            if (buf.isReadable()) {
 
                 Position position = new Position(getProtocolName());
                 position.setDeviceId(deviceSession.getDeviceId());
@@ -268,7 +274,7 @@ public class WatchProtocolDecoder extends BaseProtocolDecoder {
                     position.set("pressureHigh", values[valueIndex++]);
                     position.set("pressureLow", values[valueIndex++]);
                 }
-                position.set("pulse", values[valueIndex]);
+                position.set(Position.KEY_HEART_RATE, Integer.parseInt(values[valueIndex]));
 
                 return position;
 

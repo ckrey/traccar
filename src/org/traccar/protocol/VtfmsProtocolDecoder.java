@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2017 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
 import org.traccar.helper.Parser;
@@ -133,7 +133,7 @@ public class VtfmsProtocolDecoder extends BaseProtocolDecoder {
 
         position.setSpeed(UnitsConverter.knotsFromKph(parser.nextDouble(0)));
 
-        position.set(Position.KEY_HOURS, parser.nextInt());
+        position.set(Position.KEY_HOURS, UnitsConverter.msFromHours(parser.nextInt()));
         position.set("idleHours", parser.nextInt());
         position.set(Position.KEY_ODOMETER, parser.nextInt() * 100);
         position.set(Position.KEY_CHARGE, parser.next().equals("1"));

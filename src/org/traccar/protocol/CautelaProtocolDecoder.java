@@ -15,7 +15,7 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
 import org.traccar.helper.DateBuilder;
@@ -51,7 +51,7 @@ public class CautelaProtocolDecoder extends BaseProtocolDecoder {
             return null;
         }
 
-        String type = parser.next();
+        parser.next(); // type
 
         DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, parser.next());
         if (deviceSession == null) {

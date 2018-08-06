@@ -15,24 +15,20 @@
  */
 package org.traccar.notification;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.ning.http.client.AsyncHttpClient.BoundRequestBuilder;
-import java.util.Collections;
-import java.util.List;
-
+import org.apache.commons.collections4.MultiValuedMap;
+import org.apache.commons.collections4.multimap.ArrayListValuedHashMap;
 import org.traccar.Context;
-import org.traccar.helper.Log;
 import org.traccar.model.Device;
 import org.traccar.model.Event;
 import org.traccar.model.Geofence;
+import org.traccar.model.Maintenance;
 import org.traccar.model.Position;
 
-import java.nio.charset.StandardCharsets;
+import javax.ws.rs.client.AsyncInvoker;
+import javax.ws.rs.client.Invocation;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
-
-import com.ning.http.client.FluentCaseInsensitiveStringsMap;
 
 public abstract class EventForwarder {
 
@@ -48,41 +44,34 @@ public abstract class EventForwarder {
     private static final String KEY_EVENT = "event";
     private static final String KEY_GEOFENCE = "geofence";
     private static final String KEY_DEVICE = "device";
+    private static final String KEY_MAINTENANCE = "maintenance";
     private static final String KEY_USERS = "users";
 
     public final void forwardEvent(Event event, Position position, Set<Long> users) {
 
-        BoundRequestBuilder requestBuilder = Context.getAsyncHttpClient().preparePost(url);
-        requestBuilder.setBodyEncoding(StandardCharsets.UTF_8.name());
-
-        requestBuilder.addHeader("Content-Type", getContentType());
+        Invocation.Builder requestBuilder = Context.getClient().target(url).request();
 
         if (header != null && !header.isEmpty()) {
-            FluentCaseInsensitiveStringsMap params = new FluentCaseInsensitiveStringsMap();
-            params.putAll(splitIntoKeyValues(header, ":"));
-            requestBuilder.setHeaders(params);
-        }
-
-        setContent(event, position, users, requestBuilder);
-        requestBuilder.execute();
-    }
-
-    protected Map<String, List<String>> splitIntoKeyValues(String params, String separator) {
-
-        String[] splitedLine;
-        Map<String, List<String>> paramsMap = new HashMap<>();
-        String[] paramsLines = params.split("\\r?\\n");
-
-        for (String paramLine: paramsLines) {
-            splitedLine = paramLine.split(separator, 2);
-            if (splitedLine.length == 2) {
-                paramsMap.put(splitedLine[0].trim(), Collections.singletonList(splitedLine[1].trim()));
+            for (Map.Entry<String, String> entry : splitKeyValues(header, ":").entries()) {
+                requestBuilder = requestBuilder.header(entry.getKey(), entry.getValue());
             }
         }
-        return paramsMap;
+
+        executeRequest(event, position, users, requestBuilder.async());
     }
 
-    protected String prepareJsonPayload(Event event, Position position, Set<Long> users) {
+    protected MultiValuedMap<String, String> splitKeyValues(String params, String separator) {
+        MultiValuedMap<String, String> data = new ArrayListValuedHashMap<>();
+        for (String line: params.split("\\r?\\n")) {
+            String[] values = line.split(separator, 2);
+            if (values.length == 2) {
+                data.put(values[0].trim(), values[1].trim());
+            }
+        }
+        return data;
+    }
+
+    protected Map<String, Object> preparePayload(Event event, Position position, Set<Long> users) {
         Map<String, Object> data = new HashMap<>();
         data.put(KEY_EVENT, event);
         if (position != null) {
@@ -98,17 +87,17 @@ public abstract class EventForwarder {
                 data.put(KEY_GEOFENCE, geofence);
             }
         }
-        data.put(KEY_USERS, Context.getUsersManager().getItems(users));
-        try {
-            return Context.getObjectMapper().writeValueAsString(data);
-        } catch (JsonProcessingException e) {
-            Log.warning(e);
-            return null;
+        if (event.getMaintenanceId() != 0) {
+            Maintenance maintenance = Context.getMaintenancesManager().getById(event.getMaintenanceId());
+            if (maintenance != null) {
+                data.put(KEY_MAINTENANCE, maintenance);
+            }
         }
+        data.put(KEY_USERS, Context.getUsersManager().getItems(users));
+        return data;
     }
 
-    protected abstract String getContentType();
-    protected abstract void setContent(
-            Event event, Position position, Set<Long> users, BoundRequestBuilder requestBuilder);
+    protected abstract void executeRequest(
+            Event event, Position position, Set<Long> users, AsyncInvoker invoker);
 
 }

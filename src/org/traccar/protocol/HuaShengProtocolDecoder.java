@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 - 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,12 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.Channel;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.BitUtil;
 import org.traccar.helper.DateBuilder;
 import org.traccar.helper.UnitsConverter;
@@ -41,9 +42,9 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
     public static final int MSG_HSO_REQ = 0x0002;
     public static final int MSG_HSO_RSP = 0x0003;
 
-    private void sendResponse(Channel channel, int type, int index, ChannelBuffer content) {
+    private void sendResponse(Channel channel, int type, int index, ByteBuf content) {
         if (channel != null) {
-            ChannelBuffer response = ChannelBuffers.dynamicBuffer();
+            ByteBuf response = Unpooled.buffer();
             response.writeByte(0xC0);
             response.writeShort(0x0100);
             response.writeShort(12 + (content != null ? content.readableBytes() : 0));
@@ -52,9 +53,10 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
             response.writeInt(index);
             if (content != null) {
                 response.writeBytes(content);
+                content.release();
             }
             response.writeByte(0xC0);
-            channel.write(response);
+            channel.writeAndFlush(new NetworkMessage(response, channel.remoteAddress()));
         }
     }
 
@@ -62,7 +64,7 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
     protected Object decode(
             Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
 
-        ChannelBuffer buf = (ChannelBuffer) msg;
+        ByteBuf buf = (ByteBuf) msg;
 
         buf.skipBytes(1); // start marker
         buf.readUnsignedByte(); // flag
@@ -80,10 +82,10 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
                 int subtype = buf.readUnsignedShort();
                 int length = buf.readUnsignedShort() - 4;
                 if (subtype == 0x0003) {
-                    String imei = buf.readBytes(length).toString(StandardCharsets.US_ASCII);
+                    String imei = buf.readSlice(length).toString(StandardCharsets.US_ASCII);
                     DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, imei);
                     if (deviceSession != null && channel != null) {
-                        ChannelBuffer content = ChannelBuffers.dynamicBuffer();
+                        ByteBuf content = Unpooled.buffer();
                         content.writeByte(0); // success
                         sendResponse(channel, MSG_LOGIN_RSP, index, content);
                     }
@@ -114,7 +116,7 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
             position.set(Position.KEY_IGNITION, BitUtil.check(status, 14));
             position.set(Position.KEY_EVENT, buf.readUnsignedShort());
 
-            String time = buf.readBytes(12).toString(StandardCharsets.US_ASCII);
+            String time = buf.readSlice(12).toString(StandardCharsets.US_ASCII);
 
             DateBuilder dateBuilder = new DateBuilder()
                     .setYear(Integer.parseInt(time.substring(0, 2)))

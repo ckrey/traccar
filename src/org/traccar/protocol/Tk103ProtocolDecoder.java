@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 - 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2012 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,11 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.Context;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.BitUtil;
 import org.traccar.helper.DateBuilder;
 import org.traccar.helper.Parser;
@@ -53,22 +54,20 @@ public class Tk103ProtocolDecoder extends BaseProtocolDecoder {
             .expression("([EW]),?")
             .number("(d+.d)(?:d*,)?")            // speed
             .number("(dd)(dd)(dd),?")            // time (hhmmss)
-            .number("(d+.?d{1,2}),?")            // course
             .groupBegin()
+            .number("(?:([d.]{6})|(dd)),?")      // course
             .number("([01])")                    // charge
             .number("([01])")                    // ignition
             .number("(x)")                       // io
             .number("(x)")                       // io
             .number("(x)")                       // io
-            .number("(xxx),?")                   // fuel
-            .groupEnd("?")
-            .number("(?:L(x+))?")                // odometer
+            .number("(xxx)")                     // fuel
+            .number("L(x+)")                     // odometer
+            .or()
+            .number("(d+.d+)")                   // course
+            .groupEnd()
             .any()
             .number("([+-]ddd.d)?")              // temperature
-            .groupBegin()
-            .number("([+-]?d+.d{1,2}),")         // altitude
-            .number("(d+)$")                     // number of visible satellites
-            .groupEnd("?")
             .text(")").optional()
             .compile();
 
@@ -349,10 +348,10 @@ public class Tk103ProtocolDecoder extends BaseProtocolDecoder {
             String id = sentence.substring(1, 13);
             String type = sentence.substring(13, 17);
             if (type.equals("BP00")) {
-                channel.write("(" + id + "AP01HSO)");
+                channel.writeAndFlush(new NetworkMessage("(" + id + "AP01HSO)", remoteAddress));
                 return null;
             } else if (type.equals("BP05")) {
-                channel.write("(" + id + "AP05)");
+                channel.writeAndFlush(new NetworkMessage("(" + id + "AP05)", remoteAddress));
             }
         }
 
@@ -399,9 +398,14 @@ public class Tk103ProtocolDecoder extends BaseProtocolDecoder {
         dateBuilder.setTime(parser.nextInt(0), parser.nextInt(0), parser.nextInt(0));
         position.setTime(dateBuilder.getDate());
 
-        position.setCourse(parser.nextDouble(0));
+        if (parser.hasNext()) {
+            position.setCourse(parser.nextDouble());
+        }
+        if (parser.hasNext()) {
+            position.setCourse(parser.nextDouble());
+        }
 
-        if (parser.hasNext(6)) {
+        if (parser.hasNext(7)) {
             position.set(Position.KEY_CHARGE, parser.nextInt() == 0);
             position.set(Position.KEY_IGNITION, parser.nextInt() == 1);
 
@@ -431,22 +435,15 @@ public class Tk103ProtocolDecoder extends BaseProtocolDecoder {
             }
 
             position.set(Position.KEY_FUEL_LEVEL, parser.nextHexInt());
-        }
-
-        if (parser.hasNext()) {
             position.set(Position.KEY_ODOMETER, parser.nextLong(16, 0));
         }
 
         if (parser.hasNext()) {
+            position.setCourse(parser.nextDouble());
+        }
+
+        if (parser.hasNext()) {
             position.set(Position.PREFIX_TEMP + 1, parser.nextDouble(0));
-        }
-
-        if (parser.hasNext()) {
-            position.setAltitude(parser.nextDouble(0));
-        }
-
-        if (parser.hasNext()) {
-            position.set(Position.KEY_SATELLITES_VISIBLE, parser.nextInt(0));
         }
 
         return position;

@@ -37,8 +37,11 @@ public class CommandsManager  extends ExtendedObjectManager<Command> {
 
     private final Map<Long, Queue<Command>> deviceQueues = new ConcurrentHashMap<>();
 
-    public CommandsManager(DataManager dataManager) {
+    private boolean queueing;
+
+    public CommandsManager(DataManager dataManager, boolean queueing) {
         super(dataManager, Command.class);
+        this.queueing = queueing;
     }
 
     public boolean checkDeviceCommand(long deviceId, long commandId) {
@@ -58,10 +61,10 @@ public class CommandsManager  extends ExtendedObjectManager<Command> {
                 BaseProtocol protocol = Context.getServerManager().getProtocol(lastPosition.getProtocol());
                 protocol.sendTextCommand(phone, command);
             } else if (command.getType().equals(Command.TYPE_CUSTOM)) {
-                if (Context.getSmppManager() != null) {
-                    Context.getSmppManager().sendMessageSync(phone, command.getString(Command.KEY_DATA), true);
+                if (Context.getSmsManager() != null) {
+                    Context.getSmsManager().sendMessageSync(phone, command.getString(Command.KEY_DATA), true);
                 } else {
-                    throw new RuntimeException("SMPP client is not enabled");
+                    throw new RuntimeException("SMS is not enabled");
                 }
             } else {
                 throw new RuntimeException("Command " + command.getType() + " is not supported");
@@ -70,6 +73,8 @@ public class CommandsManager  extends ExtendedObjectManager<Command> {
             ActiveDevice activeDevice = Context.getConnectionManager().getActiveDevice(deviceId);
             if (activeDevice != null) {
                 activeDevice.sendCommand(command);
+            } else if (!queueing) {
+                throw new RuntimeException("Device is not online");
             } else {
                 getDeviceQueue(deviceId).add(command);
                 return false;
