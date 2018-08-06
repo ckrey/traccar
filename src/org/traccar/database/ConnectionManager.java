@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
  */
 package org.traccar.database;
 
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.util.Timeout;
-import org.jboss.netty.util.TimerTask;
+import io.netty.channel.Channel;
+import io.netty.util.Timeout;
+import io.netty.util.TimerTask;
 import org.traccar.Context;
 import org.traccar.GlobalTimer;
 import org.traccar.Protocol;
@@ -57,9 +57,7 @@ public class ConnectionManager {
     }
 
     public void addActiveDevice(long deviceId, Protocol protocol, Channel channel, SocketAddress remoteAddress) {
-        ActiveDevice activeDevice = new ActiveDevice(deviceId, protocol, channel, remoteAddress);
-        activeDevices.put(deviceId, activeDevice);
-        Context.getCommandsManager().sendQueuedCommands(activeDevice);
+        activeDevices.put(deviceId, new ActiveDevice(deviceId, protocol, channel, remoteAddress));
     }
 
     public void removeActiveDevice(Channel channel) {
@@ -121,10 +119,9 @@ public class ConnectionManager {
         if (status.equals(Device.STATUS_ONLINE)) {
             timeouts.put(deviceId, GlobalTimer.getTimer().newTimeout(new TimerTask() {
                 @Override
-                public void run(Timeout timeout) throws Exception {
+                public void run(Timeout timeout) {
                     if (!timeout.isCancelled()) {
                         updateDevice(deviceId, Device.STATUS_UNKNOWN, null);
-                        activeDevices.remove(deviceId);
                     }
                 }
             }, deviceTimeout, TimeUnit.MILLISECONDS));
@@ -137,6 +134,10 @@ public class ConnectionManager {
         }
 
         updateDevice(device);
+
+        if (status.equals(Device.STATUS_ONLINE) && !oldStatus.equals(Device.STATUS_ONLINE)) {
+            Context.getCommandsManager().sendQueuedCommands(getActiveDevice(deviceId));
+        }
     }
 
     public Map<Event, Position> updateDeviceState(long deviceId) {

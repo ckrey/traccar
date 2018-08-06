@@ -15,12 +15,13 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.Channel;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.Context;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.DateBuilder;
 import org.traccar.helper.Parser;
 import org.traccar.helper.PatternBuilder;
@@ -80,25 +81,25 @@ public class AtrackProtocolDecoder extends BaseProtocolDecoder {
 
     private static void sendResponse(Channel channel, SocketAddress remoteAddress, long rawId, int index) {
         if (channel != null) {
-            ChannelBuffer response = ChannelBuffers.directBuffer(12);
+            ByteBuf response = Unpooled.buffer(12);
             response.writeShort(0xfe02);
             response.writeLong(rawId);
             response.writeShort(index);
-            channel.write(response, remoteAddress);
+            channel.writeAndFlush(new NetworkMessage(response, remoteAddress));
         }
     }
 
-    private static String readString(ChannelBuffer buf) {
+    private static String readString(ByteBuf buf) {
         String result = null;
         int index = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) 0);
         if (index > buf.readerIndex()) {
-            result = buf.readBytes(index - buf.readerIndex()).toString(StandardCharsets.US_ASCII);
+            result = buf.readSlice(index - buf.readerIndex()).toString(StandardCharsets.US_ASCII);
         }
         buf.readByte();
         return result;
     }
 
-    private void readCustomData(Position position, ChannelBuffer buf, String form) {
+    private void readCustomData(Position position, ByteBuf buf, String form) {
         CellTower cellTower = new CellTower();
         String[] keys = form.substring(1).split("%");
         for (String key : keys) {
@@ -219,7 +220,8 @@ public class AtrackProtocolDecoder extends BaseProtocolDecoder {
             .any()
             .compile();
 
-    private Position decodeString(Channel channel, SocketAddress remoteAddress, String sentence) {
+    private Position decodeInfo(Channel channel, SocketAddress remoteAddress, String sentence) {
+
         Position position = new Position(getProtocolName());
 
         getLastLocation(position, null);
@@ -258,20 +260,69 @@ public class AtrackProtocolDecoder extends BaseProtocolDecoder {
         }
     }
 
-    @Override
-    protected Object decode(
-            Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
+    private static final Pattern PATTERN = new PatternBuilder()
+            .text("@P,")
+            .number("x+,")                       // checksum
+            .number("d+,")                       // length
+            .number("d+,")                       // index
+            .number("(d+),")                     // imei
+            .number("(dddd)(dd)(dd)")            // date (yymmdd)
+            .number("(dd)(dd)(dd),")             // time (hhmmss)
+            .number("d+,")                       // rtc date and time
+            .number("d+,")                       // device date and time
+            .number("(-?d+),")                   // longitude
+            .number("(-?d+),")                   // latitude
+            .number("(d+),")                     // course
+            .number("(d+),")                     // report id
+            .number("(d+.?d*),")                 // odometer
+            .number("(d+),")                     // hdop
+            .number("(d+),")                     // inputs
+            .number("(d+),")                     // speed
+            .number("(d+),")                     // outputs
+            .number("(d+),")                     // adc
+            .number("[^,]*,")                    // driver
+            .number("(d+),")                     // temp1
+            .number("(d+),")                     // temp2
+            .any()
+            .compile();
 
-        ChannelBuffer buf = (ChannelBuffer) msg;
+    private Position decodeText(Channel channel, SocketAddress remoteAddress, String sentence) {
 
-        if (buf.getUnsignedShort(buf.readerIndex()) == 0xfe02) {
-            if (channel != null) {
-                channel.write(buf, remoteAddress); // keep-alive message
-            }
+        Parser parser = new Parser(PATTERN, sentence);
+        if (!parser.matches()) {
             return null;
-        } else if (buf.getByte(buf.readerIndex()) == '$') {
-            return decodeString(channel, remoteAddress, buf.toString(StandardCharsets.US_ASCII).trim());
         }
+
+        DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, parser.next());
+        if (deviceSession == null) {
+            return null;
+        }
+
+        Position position = new Position(getProtocolName());
+        position.setDeviceId(deviceSession.getDeviceId());
+
+        position.setValid(true);
+        position.setTime(parser.nextDateTime());
+        position.setLongitude(parser.nextInt() * 0.000001);
+        position.setLatitude(parser.nextInt() * 0.000001);
+        position.setCourse(parser.nextInt());
+
+        position.set(Position.KEY_EVENT, parser.nextInt());
+        position.set(Position.KEY_ODOMETER, parser.nextDouble() * 100);
+        position.set(Position.KEY_HDOP, parser.nextInt() * 0.1);
+        position.set(Position.KEY_INPUT, parser.nextInt());
+
+        position.setSpeed(UnitsConverter.knotsFromKph(parser.nextInt()));
+
+        position.set(Position.KEY_OUTPUT, parser.nextInt());
+        position.set(Position.PREFIX_ADC + 1, parser.nextInt());
+        position.set(Position.PREFIX_TEMP + 1, parser.nextInt());
+        position.set(Position.PREFIX_TEMP + 2, parser.nextInt());
+
+        return position;
+    }
+
+    private List<Position> decodeBinary(Channel channel, SocketAddress remoteAddress, ByteBuf buf) {
 
         buf.skipBytes(2); // prefix
         buf.readUnsignedShort(); // checksum
@@ -358,6 +409,26 @@ public class AtrackProtocolDecoder extends BaseProtocolDecoder {
         }
 
         return positions;
+    }
+
+    @Override
+    protected Object decode(
+            Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
+
+        ByteBuf buf = (ByteBuf) msg;
+
+        if (buf.getUnsignedShort(buf.readerIndex()) == 0xfe02) {
+            if (channel != null) {
+                channel.writeAndFlush(new NetworkMessage(buf.retain(), remoteAddress)); // keep-alive message
+            }
+            return null;
+        } else if (buf.getByte(buf.readerIndex()) == '$') {
+            return decodeInfo(channel, remoteAddress, buf.toString(StandardCharsets.US_ASCII).trim());
+        } else if (buf.getByte(buf.readerIndex() + 2) == ',') {
+            return decodeText(channel, remoteAddress, buf.toString(StandardCharsets.US_ASCII).trim());
+        } else {
+            return decodeBinary(channel, remoteAddress, buf);
+        }
     }
 
 }

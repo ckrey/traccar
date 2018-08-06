@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,33 +15,46 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.handler.codec.frame.FrameDecoder;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
+import org.traccar.BaseFrameDecoder;
 
-public class L100FrameDecoder extends FrameDecoder {
+public class L100FrameDecoder extends BaseFrameDecoder {
 
     @Override
     protected Object decode(
-            ChannelHandlerContext ctx, Channel channel, ChannelBuffer buf) throws Exception {
+            ChannelHandlerContext ctx, Channel channel, ByteBuf buf) throws Exception {
 
-        if (buf.readableBytes() < 80) {
+        if (buf.readableBytes() < 10) {
             return null;
         }
 
-        int index = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) 0x02);
-        if (index == -1) {
-            index = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) 0x04);
+        int header = buf.getByte(buf.readerIndex());
+        boolean obd = header == 'L' || header == 'H';
+
+        int index;
+        if (obd) {
+            index = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) '*');
+        } else {
+            index = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) 0x02);
             if (index == -1) {
-                return null;
+                index = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) 0x04);
+                if (index == -1) {
+                    return null;
+                }
             }
         }
 
         index += 2; // checksum
 
-        if (buf.readableBytes() >= index - buf.readerIndex()) {
-            return buf.readBytes(index - buf.readerIndex());
+        if (buf.writerIndex() >= index) {
+            if (!obd) {
+                buf.skipBytes(2); // header
+            }
+            ByteBuf frame = buf.readRetainedSlice(index - buf.readerIndex() - 2);
+            buf.skipBytes(2); // footer
+            return frame;
         }
 
         return null;

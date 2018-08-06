@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Anton Tananaev (anton@traccar.org)
+ * Copyright 2017 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import org.traccar.BaseProtocolEncoder;
 import org.traccar.helper.DataConverter;
 import org.traccar.helper.Log;
@@ -30,24 +30,27 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
     @Override
     protected Object encodeCommand(Command command) {
 
-        ChannelBuffer id =  ChannelBuffers.wrappedBuffer(
+        ByteBuf id = Unpooled.wrappedBuffer(
                 DataConverter.parseHex(getUniqueId(command.getDeviceId())));
+        try {
+            ByteBuf data = Unpooled.buffer();
+            byte[] time = DataConverter.parseHex(new SimpleDateFormat("yyMMddHHmmss").format(new Date()));
 
-        ChannelBuffer data = ChannelBuffers.dynamicBuffer();
-        byte[] time = DataConverter.parseHex(new SimpleDateFormat("yyMMddHHmmss").format(new Date()));
-
-        switch (command.getType()) {
-            case Command.TYPE_ENGINE_STOP:
-                data.writeByte(0x01);
-                data.writeBytes(time);
-                return HuabaoProtocolDecoder.formatMessage(HuabaoProtocolDecoder.MSG_OIL_CONTROL, id, data);
-            case Command.TYPE_ENGINE_RESUME:
-                data.writeByte(0x00);
-                data.writeBytes(time);
-                return HuabaoProtocolDecoder.formatMessage(HuabaoProtocolDecoder.MSG_OIL_CONTROL, id, data);
-            default:
-                Log.warning(new UnsupportedOperationException(command.getType()));
-                return null;
+            switch (command.getType()) {
+                case Command.TYPE_ENGINE_STOP:
+                    data.writeByte(0x01);
+                    data.writeBytes(time);
+                    return HuabaoProtocolDecoder.formatMessage(HuabaoProtocolDecoder.MSG_OIL_CONTROL, id, data);
+                case Command.TYPE_ENGINE_RESUME:
+                    data.writeByte(0x00);
+                    data.writeBytes(time);
+                    return HuabaoProtocolDecoder.formatMessage(HuabaoProtocolDecoder.MSG_OIL_CONTROL, id, data);
+                default:
+                    Log.warning(new UnsupportedOperationException(command.getType()));
+                    return null;
+            }
+        } finally {
+            id.release();
         }
     }
 

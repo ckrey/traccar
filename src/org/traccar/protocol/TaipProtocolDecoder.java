@@ -15,9 +15,10 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.BitUtil;
 import org.traccar.helper.Checksum;
 import org.traccar.helper.DateBuilder;
@@ -178,7 +179,7 @@ public class TaipProtocolDecoder extends BaseProtocolDecoder {
             position.set(Position.PREFIX_TEMP + 2, parser.nextInt() * 0.01);
         }
 
-        position.setValid(valid != null ? valid : true);
+        position.setValid(valid == null || valid);
 
         if (event != null) {
             position.set(Position.KEY_EVENT, event);
@@ -271,9 +272,9 @@ public class TaipProtocolDecoder extends BaseProtocolDecoder {
                 if (messageIndex != null) {
                     String response = ">ACK;ID=" + uniqueId + ";" + messageIndex + ";*";
                     response += String.format("%02X", Checksum.xor(response)) + "<";
-                    channel.write(response, remoteAddress);
+                    channel.writeAndFlush(new NetworkMessage(response, remoteAddress));
                 } else {
-                    channel.write(uniqueId, remoteAddress);
+                    channel.writeAndFlush(new NetworkMessage(uniqueId, remoteAddress));
                 }
             }
             return position;

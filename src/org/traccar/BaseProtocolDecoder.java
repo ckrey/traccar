@@ -15,9 +15,8 @@
  */
 package org.traccar;
 
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.socket.DatagramChannel;
-import org.jboss.netty.handler.codec.http.HttpRequestDecoder;
+import io.netty.channel.Channel;
+import io.netty.channel.socket.DatagramChannel;
 import org.traccar.helper.Log;
 import org.traccar.helper.UnitsConverter;
 import org.traccar.model.Device;
@@ -83,7 +82,11 @@ public abstract class BaseProtocolDecoder extends ExtendedObjectDecoder {
     }
 
     protected TimeZone getTimeZone(long deviceId) {
-        TimeZone result = TimeZone.getTimeZone("UTC");
+        return getTimeZone(deviceId, "UTC");
+    }
+
+    protected TimeZone getTimeZone(long deviceId, String defaultTimeZone) {
+        TimeZone result = TimeZone.getTimeZone(defaultTimeZone);
         String timeZoneName = null;
         if (Context.getDeviceManager() != null) {
             timeZoneName = Context.getDeviceManager().lookupAttributeString(
@@ -145,7 +148,7 @@ public abstract class BaseProtocolDecoder extends ExtendedObjectDecoder {
     }
 
     public DeviceSession getDeviceSession(Channel channel, SocketAddress remoteAddress, String... uniqueIds) {
-        if (channel != null && channel.getPipeline().get(HttpRequestDecoder.class) != null
+        if (channel != null && channel.pipeline().get("httpDecoder") != null
                 || Context.getConfig().getBoolean("decoder.ignoreSessionCache")) {
             long deviceId = findDeviceId(remoteAddress, uniqueIds);
             if (deviceId != 0) {

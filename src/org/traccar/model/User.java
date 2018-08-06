@@ -75,14 +75,14 @@ public class User extends ExtendedModel {
         this.readonly = readonly;
     }
 
-    private boolean admin;
+    private boolean administrator;
 
-    public boolean getAdmin() {
-        return admin;
+    public boolean getAdministrator() {
+        return administrator;
     }
 
-    public void setAdmin(boolean admin) {
-        this.admin = admin;
+    public void setAdministrator(boolean administrator) {
+        this.administrator = administrator;
     }
 
     private String map;
@@ -203,7 +203,7 @@ public class User extends ExtendedModel {
 
     public void setToken(String token) {
         if (token != null && !token.isEmpty()) {
-            if (!token.matches("^[a-zA-Z0-9]{16,}$")) {
+            if (!token.matches("^[a-zA-Z0-9-]{16,}$")) {
                 throw new IllegalArgumentException("Illegal token");
             }
             this.token = token;

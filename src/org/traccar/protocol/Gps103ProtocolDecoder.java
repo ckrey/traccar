@@ -15,12 +15,14 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.channel.Channel;
+import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.helper.DateBuilder;
 import org.traccar.helper.Parser;
 import org.traccar.helper.PatternBuilder;
+import org.traccar.helper.UnitsConverter;
 import org.traccar.model.CellTower;
 import org.traccar.model.Network;
 import org.traccar.model.Position;
@@ -65,14 +67,14 @@ public class Gps103ProtocolDecoder extends BaseProtocolDecoder {
             .expression("([EW]),").optional()
             .number("(d+)(dd.d+),")              // longitude (dddmm.mmmm)
             .expression("([EW])?,").optional()
-            .number("(d+.?d*)?,?")               // speed
-            .number("(d+.?d*)?,?")               // course
-            .number("(d+.?d*)?,?")               // altitude
-            .expression("([^,;]+)?,?")
-            .expression("([^,;]+)?,?")
-            .expression("([^,;]+)?,?")
-            .expression("([^,;]+)?,?")
-            .expression("([^,;]+)?,?")
+            .number("(d+.?d*)?").optional()      // speed
+            .number(",(d+.?d*)?").optional()     // course
+            .number(",(d+.?d*)?").optional()     // altitude
+            .number(",([01])?").optional()       // ignition
+            .number(",([01])?").optional()       // door
+            .number(",(?:(d+.d+)%)?").optional() // fuel 1
+            .number(",(?:(d+.d+)%)?").optional() // fuel 2
+            .number("(-?d+)?")                   // temperature
             .groupEnd()
             .any()
             .compile();
@@ -101,7 +103,7 @@ public class Gps103ProtocolDecoder extends BaseProtocolDecoder {
         if (value.startsWith("T:")) {
             return Position.ALARM_TEMPERATURE;
         } else if (value.startsWith("oil")) {
-            return Position.ALARM_OIL_LEAK;
+            return Position.ALARM_FUEL_LEAK;
         }
         switch (value) {
             case "tracker":
@@ -159,7 +161,7 @@ public class Gps103ProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.KEY_ALARM, decodeAlarm(alarm));
         if (alarm.equals("help me")) {
             if (channel != null) {
-                channel.write("**,imei:" + imei + ",E;", remoteAddress);
+                channel.writeAndFlush(new NetworkMessage("**,imei:" + imei + ",E;", remoteAddress));
             }
         } else if (alarm.equals("acc on")) {
             position.set(Position.KEY_IGNITION, true);
@@ -168,7 +170,7 @@ public class Gps103ProtocolDecoder extends BaseProtocolDecoder {
         } else if (alarm.startsWith("T:")) {
             position.set(Position.PREFIX_TEMP + 1, alarm.substring(2));
         } else if (alarm.startsWith("oil ")) {
-            position.set("oil", alarm.substring(4));
+            position.set(Position.KEY_FUEL_LEVEL, Double.parseDouble(alarm.substring(4)));
         } else if (!position.getAttributes().containsKey(Position.KEY_ALARM) && !alarm.equals("tracker")) {
             position.set(Position.KEY_EVENT, alarm);
         }
@@ -218,9 +220,15 @@ public class Gps103ProtocolDecoder extends BaseProtocolDecoder {
             position.setCourse(parser.nextDouble(0));
             position.setAltitude(parser.nextDouble(0));
 
-            for (int i = 1; i <= 5; i++) {
-                position.set(Position.PREFIX_IO + i, parser.next());
+            if (parser.hasNext()) {
+                position.set(Position.KEY_IGNITION, parser.nextInt() == 1);
             }
+            if (parser.hasNext()) {
+                position.set(Position.KEY_DOOR, parser.nextInt() == 1);
+            }
+            position.set("fuel1", parser.nextDouble());
+            position.set("fuel2", parser.nextDouble());
+            position.set(Position.PREFIX_TEMP + 1, parser.nextInt());
 
         }
 
@@ -247,7 +255,9 @@ public class Gps103ProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.KEY_ODOMETER, parser.nextInt(0));
         parser.nextDouble(0); // instant fuel consumption
         position.set(Position.KEY_FUEL_CONSUMPTION, parser.nextDouble(0));
-        position.set(Position.KEY_HOURS, parser.nextInt());
+        if (parser.hasNext()) {
+            position.set(Position.KEY_HOURS, UnitsConverter.msFromHours(parser.nextInt()));
+        }
         position.set(Position.KEY_OBD_SPEED, parser.nextInt(0));
         position.set(Position.KEY_ENGINE_LOAD, parser.next());
         position.set(Position.KEY_COOLANT_TEMP, parser.nextInt());
@@ -267,7 +277,7 @@ public class Gps103ProtocolDecoder extends BaseProtocolDecoder {
 
         if (sentence.contains("##")) {
             if (channel != null) {
-                channel.write("LOAD", remoteAddress);
+                channel.writeAndFlush(new NetworkMessage("LOAD", remoteAddress));
                 Matcher matcher = Pattern.compile("##,imei:(\\d+),A").matcher(sentence);
                 if (matcher.matches()) {
                     getDeviceSession(channel, remoteAddress, matcher.group(1));
@@ -278,7 +288,7 @@ public class Gps103ProtocolDecoder extends BaseProtocolDecoder {
 
         if (!sentence.isEmpty() && Character.isDigit(sentence.charAt(0))) {
             if (channel != null) {
-                channel.write("ON", remoteAddress);
+                channel.writeAndFlush(new NetworkMessage("ON", remoteAddress));
             }
             int start = sentence.indexOf("imei:");
             if (start >= 0) {

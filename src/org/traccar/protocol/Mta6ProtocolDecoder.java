@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 Anton Tananaev (anton@traccar.org)
+ * Copyright 2013 - 2018 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,20 +15,22 @@
  */
 package org.traccar.protocol;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.handler.codec.http.DefaultHttpResponse;
-import org.jboss.netty.handler.codec.http.HttpRequest;
-import org.jboss.netty.handler.codec.http.HttpResponse;
-import org.jboss.netty.handler.codec.http.HttpResponseStatus;
-import org.jboss.netty.handler.codec.http.HttpVersion;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpVersion;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.DeviceSession;
+import org.traccar.NetworkMessage;
 import org.traccar.Protocol;
 import org.traccar.helper.BitUtil;
 import org.traccar.helper.DateBuilder;
 import org.traccar.helper.Log;
+import org.traccar.helper.UnitsConverter;
 import org.traccar.model.Position;
 
 import java.net.SocketAddress;
@@ -47,30 +49,28 @@ public class Mta6ProtocolDecoder extends BaseProtocolDecoder {
     }
 
     private void sendContinue(Channel channel) {
-        HttpResponse response = new DefaultHttpResponse(
+        FullHttpResponse response = new DefaultFullHttpResponse(
                 HttpVersion.HTTP_1_1, HttpResponseStatus.CONTINUE);
-        channel.write(response);
+        channel.writeAndFlush(new NetworkMessage(response, channel.remoteAddress()));
     }
 
     private void sendResponse(Channel channel, short packetId, short packetCount) {
-        HttpResponse response = new DefaultHttpResponse(
-                HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
-
-        ChannelBuffer begin = ChannelBuffers.copiedBuffer("#ACK#", StandardCharsets.US_ASCII);
-        ChannelBuffer end = ChannelBuffers.directBuffer(3);
+        ByteBuf begin = Unpooled.copiedBuffer("#ACK#", StandardCharsets.US_ASCII);
+        ByteBuf end = Unpooled.buffer(3);
         end.writeByte(packetId);
         end.writeByte(packetCount);
         end.writeByte(0);
 
-        response.setContent(ChannelBuffers.wrappedBuffer(begin, end));
-        channel.write(response);
+        FullHttpResponse response = new DefaultFullHttpResponse(
+                HttpVersion.HTTP_1_1, HttpResponseStatus.OK, Unpooled.wrappedBuffer(begin, end));
+        channel.writeAndFlush(new NetworkMessage(response, channel.remoteAddress()));
     }
 
     private static class FloatReader {
 
         private int previousFloat;
 
-        public float readFloat(ChannelBuffer buf) {
+        public float readFloat(ByteBuf buf) {
             switch (buf.getUnsignedByte(buf.readerIndex()) >> 6) {
                 case 0:
                     previousFloat = buf.readInt() << 2;
@@ -97,7 +97,7 @@ public class Mta6ProtocolDecoder extends BaseProtocolDecoder {
 
         private long weekNumber;
 
-        public Date readTime(ChannelBuffer buf) {
+        public Date readTime(ByteBuf buf) {
             long weekTime = (long) (readFloat(buf) * 1000);
             if (weekNumber == 0) {
                 weekNumber = buf.readUnsignedShort();
@@ -111,7 +111,7 @@ public class Mta6ProtocolDecoder extends BaseProtocolDecoder {
 
     }
 
-    private List<Position> parseFormatA(DeviceSession deviceSession, ChannelBuffer buf) {
+    private List<Position> parseFormatA(DeviceSession deviceSession, ByteBuf buf) {
         List<Position> positions = new LinkedList<>();
 
         FloatReader latitudeReader = new FloatReader();
@@ -119,7 +119,7 @@ public class Mta6ProtocolDecoder extends BaseProtocolDecoder {
         TimeReader timeReader = new TimeReader();
 
         try {
-            while (buf.readable()) {
+            while (buf.isReadable()) {
                 Position position = new Position(getProtocolName());
                 position.setDeviceId(deviceSession.getDeviceId());
 
@@ -198,7 +198,7 @@ public class Mta6ProtocolDecoder extends BaseProtocolDecoder {
         return positions;
     }
 
-    private Position parseFormatA1(DeviceSession deviceSession, ChannelBuffer buf) {
+    private Position parseFormatA1(DeviceSession deviceSession, ByteBuf buf) {
         Position position = new Position(getProtocolName());
         position.setDeviceId(deviceSession.getDeviceId());
 
@@ -231,7 +231,7 @@ public class Mta6ProtocolDecoder extends BaseProtocolDecoder {
 
         if (BitUtil.check(flags, 1)) {
             position.set(Position.KEY_FUEL_CONSUMPTION, new FloatReader().readFloat(buf));
-            position.set(Position.KEY_HOURS, new FloatReader().readFloat(buf));
+            position.set(Position.KEY_HOURS, UnitsConverter.msFromHours(new FloatReader().readFloat(buf)));
             position.set("tank", buf.readUnsignedByte() * 0.4);
         }
 
@@ -277,8 +277,8 @@ public class Mta6ProtocolDecoder extends BaseProtocolDecoder {
     protected Object decode(
             Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
 
-        HttpRequest request = (HttpRequest) msg;
-        ChannelBuffer buf = request.getContent();
+        FullHttpRequest request = (FullHttpRequest) msg;
+        ByteBuf buf = request.content();
 
         buf.skipBytes("id=".length());
         int index = buf.indexOf(buf.readerIndex(), buf.writerIndex(), (byte) '&');
@@ -308,7 +308,7 @@ public class Mta6ProtocolDecoder extends BaseProtocolDecoder {
             } else {
                 return parseFormatA(deviceSession, buf);
             }
-        } //else if (0x34 0x38 0x4F 0x59)
+        } // else if (0x34 0x38 0x4F 0x59)
 
         return null;
     }
