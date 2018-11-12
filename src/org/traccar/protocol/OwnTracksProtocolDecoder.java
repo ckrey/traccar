@@ -37,7 +37,7 @@ import java.util.Date;
 
 public class OwnTracksProtocolDecoder extends BaseHttpProtocolDecoder {
 
-    public OwnTracksProtocolDecoder(OwnTracksProtocol protocol) {
+    public OwnTracksProtocolDecoder(Protocol protocol) {
         super(protocol);
     }
 
